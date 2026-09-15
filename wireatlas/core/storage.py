@@ -7,6 +7,8 @@ from wireatlas.models.connection import Connection, LinkType
 from wireatlas.models.device import Device, DeviceType
 from wireatlas.models.network_map import NetworkMap
 
+class WireAtlasFileError(Exception):
+    pass
 
 def _device_to_dict(device: Device) -> dict:
     return {
@@ -75,49 +77,89 @@ def save_network_map(network_map: NetworkMap, path) -> None:
 def load_network_map(path) -> NetworkMap:
     path = Path(path)
 
-    with path.open("r", encoding="utf-8") as file:
-        data = json.load(file)
+    try:
+        with path.open("r", encoding="utf-8") as file:
+            data = json.load(file)
+    except json.JSONDecodeError as exc:
+        raise WireAtlasFileError(
+            "File is not valid WireAtlas data"
+        ) from exc
 
-    devices = [
-        Device(
-            id=device["id"],
-            name=device["name"],
-            device_type=DeviceType(device["device_type"]),
-            ip_address=device.get("ip_address", ""),
-            mac_address=device.get("mac_address", ""),
-            vlan_id=device.get("vlan_id", ""),
-            subnet=device.get("subnet", ""),
-            notes=device.get("notes", ""),
-            x=device.get("x", 0.0),
-            y=device.get("y", 0.0),
-            field_sources=device.get("field_sources", {}),
+    format_version = data.get("format_version", "0.1")
+
+    if format_version != "0.1":
+        raise WireAtlasFileError(
+            f"Unsupported WireAtlas format version: {format_version}"
         )
-        for device in data.get("devices", [])
-    ]
 
-    connections = [
-        Connection(
-            id=connection["id"],
-            source_device_id=connection["source_device_id"],
-            destination_device_id=connection["destination_device_id"],
-            source_interface=connection.get("source_interface", ""),
-            destination_interface=connection.get("destination_interface", ""),
-            link_type=LinkType(
+    site_name = data.get("site_name")
+
+    if not site_name:
+        raise WireAtlasFileError(
+            "Missing required site name"
+        )
+
+    devices = []
+
+    for device in data.get("devices", []):
+        try:
+            device_type = DeviceType(device["device_type"])
+        except ValueError as exc:
+            raise WireAtlasFileError(
+                f"Unknown device type: {device['device_type']}"
+            ) from exc
+
+        devices.append(
+            Device(
+                id=device["id"],
+                name=device["name"],
+                device_type=device_type,
+                ip_address=device.get("ip_address", ""),
+                mac_address=device.get("mac_address", ""),
+                vlan_id=device.get("vlan_id", ""),
+                subnet=device.get("subnet", ""),
+                notes=device.get("notes", ""),
+                x=device.get("x", 0.0),
+                y=device.get("y", 0.0),
+                field_sources=device.get("field_sources", {}),
+            )
+        )
+
+    connections = []
+
+    for connection in data.get("connections", []):
+        try:
+            link_type = LinkType(
                 connection.get(
                     "link_type",
                     LinkType.STANDARD_ACCESS.value,
                 )
-            ),
-            notes=connection.get("notes", ""),
+            )
+        except ValueError as exc:
+            raise WireAtlasFileError(
+                f"Unknown link type: {connection.get('link_type')}"
+            ) from exc
+
+        connections.append(
+            Connection(
+                id=connection["id"],
+                source_device_id=connection["source_device_id"],
+                destination_device_id=connection["destination_device_id"],
+                source_interface=connection.get("source_interface", ""),
+                destination_interface=connection.get(
+                    "destination_interface",
+                    "",
+                ),
+                link_type=link_type,
+                notes=connection.get("notes", ""),
+            )
         )
-        for connection in data.get("connections", [])
-    ]
 
     return NetworkMap(
-        site_name=data["site_name"],
+        site_name=site_name,
         root_device_id=data.get("root_device_id", ""),
         devices=devices,
         connections=connections,
         notes=data.get("notes", ""),
-        format_version=data.get("format_version", "0.1"),
+        format_version=format_version,
     )
