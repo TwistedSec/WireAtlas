@@ -25,6 +25,24 @@ def test_device_preserves_supplied_fields():
     assert device.y == 200.0
 
 
+def test_device_tracks_field_sources():
+    device = Device(
+        name="Main Router",
+        device_type=DeviceType.FIREWALL_ROUTER,
+        ip_address="192.168.1.1",
+        mac_address="AA:BB:CC:DD:EE:FF",
+        field_sources={
+            "name": "manual",
+            "ip_address": "manual",
+            "mac_address": "manual",
+        },
+    )
+
+    assert device.field_sources["name"] == "manual"
+    assert device.field_sources["ip_address"] == "manual"
+    assert device.field_sources["mac_address"] == "manual"
+
+
 def test_devices_receive_unique_ids():
     first = Device(
         name="Switch 1",
