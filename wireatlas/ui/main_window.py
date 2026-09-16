@@ -1,14 +1,18 @@
-﻿from PySide6.QtCore import Qt
+﻿from pathlib import Path
+from PySide6.QtWidgets import QFileDialog
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QSplitter,
     QToolBar,
     QVBoxLayout,
     QWidget,
+    QFileDialog,
 )
 
 from wireatlas.core.document import MapDocument
@@ -17,7 +21,7 @@ from wireatlas.models.network_map import NetworkMap
 from wireatlas.ui.device_details import DeviceDetailsPanel
 from wireatlas.ui.device_dialog import DeviceDialog
 from wireatlas.ui.topology_view import TopologyView
-
+from wireatlas.core.storage import save_network_map
 
 class MainWindow(QMainWindow):
     def __init__(self, parent=None):
@@ -27,6 +31,9 @@ class MainWindow(QMainWindow):
 
         self._build_toolbar()
         self._build_central_widget()
+        self.save_action.triggered.connect(
+            self._save
+        )
 
         self.add_device_action.triggered.connect(
             self._open_add_device_dialog
@@ -34,6 +41,10 @@ class MainWindow(QMainWindow):
 
         self.topology_view.device_selected.connect(
             self._show_device_details
+        )
+
+        self.save_as_action.triggered.connect(
+            lambda: self._save_as()
         )
 
         self.statusBar().showMessage("Ready")
@@ -50,19 +61,18 @@ class MainWindow(QMainWindow):
         self.new_action = toolbar.addAction("New")
         self.open_action = toolbar.addAction("Open")
         self.save_action = toolbar.addAction("Save")
+        self.save_as_action = toolbar.addAction("Save As")
         self.add_device_action = toolbar.addAction("Add Device")
         self.add_connection_action = toolbar.addAction(
             "Add Connection"
-        )
+    )
         self.export_pdf_action = toolbar.addAction(
             "Export PDF"
-        )
+    )
 
-        self.new_action.setEnabled(False)
-        self.open_action.setEnabled(False)
-        self.save_action.setEnabled(False)
         self.add_connection_action.setEnabled(False)
         self.export_pdf_action.setEnabled(False)
+
 
     def _build_central_widget(self) -> None:
         central_widget = QWidget()
@@ -100,7 +110,86 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(central_widget)
 
+    @staticmethod
+    def _ensure_wireatlas_extension(path: Path) -> Path:
+        if path.suffix.lower() == ".wireatlas":
+            return path
+
+        return path.with_name(
+            f"{path.name}.wireatlas"
+        )
+
+    def _suggested_filename(self) -> str:
+        site_name = self.network_map.site_name.strip()
+
+        if not site_name:
+            site_name = "Untitled Network"
+
+        return f"{site_name}.wireatlas"
+
+    def _save(self) -> bool:
+        if self.document.current_path is None:
+            return self._save_as()
+
+        try:
+            save_network_map(
+                self.network_map,
+                self.document.current_path,
+            )
+        except Exception as error:
+            self._show_save_error(error)
+            return False
+
+        self.document.mark_saved(
+            self.document.current_path
+        )
+        self._update_window_title()
+        return True
+
+    def _save_as(self) -> bool:
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save WireAtlas Network Map",
+            self._suggested_filename(),
+            "WireAtlas Network Maps (*.wireatlas)",
+        )
+
+        if not filename:
+            return False
+
+        path = self._ensure_wireatlas_extension(
+            Path(filename)
+        )
+
+        try:
+            save_network_map(
+                self.network_map,
+                path,
+            )
+        except Exception as error:
+            self._show_save_error(error)
+            return False
+
+        self.document.mark_saved(path)
+        self._update_window_title()
+        return True
+
+    def _show_save_error(
+        self,
+        error: Exception,
+    ) -> None:
+        QMessageBox.critical(
+            self,
+            "Save Failed",
+            "Could not save the network map.\n\n"
+            f"{error}",
+        )
+    
     def _update_window_title(self) -> None:
+        marker = " *" if self.document.dirty else ""
+        self.setWindowTitle(
+            f"WireAtlas — {self.network_map.site_name}{marker}"
+        )
         marker = " *" if self.document.dirty else ""
         self.setWindowTitle(
             f"WireAtlas — {self.network_map.site_name}{marker}"

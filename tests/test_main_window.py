@@ -1,5 +1,6 @@
 ﻿from PySide6.QtWidgets import QDialog
-
+from pathlib import Path
+from PySide6.QtWidgets import QFileDialog
 from wireatlas.models.device import Device, DeviceType
 from wireatlas.ui.main_window import MainWindow
 import wireatlas.ui.main_window as main_window_module
@@ -12,17 +13,45 @@ def test_main_window_starts_with_untitled_network(qapp):
     assert window.site_name_input.text() == "Untitled Network"
 
 
-def test_main_window_toolbar_enables_only_add_device(qapp):
+def test_main_window_toolbar_enables_file_actions(qapp):
     window = MainWindow()
 
+    assert window.new_action.isEnabled()
+    assert window.open_action.isEnabled()
+    assert window.save_action.isEnabled()
+    assert window.save_as_action.isEnabled()
     assert window.add_device_action.isEnabled()
-
-    assert not window.new_action.isEnabled()
-    assert not window.open_action.isEnabled()
-    assert not window.save_action.isEnabled()
     assert not window.add_connection_action.isEnabled()
     assert not window.export_pdf_action.isEnabled()
 
+def test_ensure_wireatlas_extension_appends_when_missing(qapp):
+    window = MainWindow()
+
+    result = window._ensure_wireatlas_extension(
+        Path("office-map")
+    )
+
+    assert result == Path("office-map.wireatlas")
+
+
+def test_ensure_wireatlas_extension_keeps_existing_extension(qapp):
+    window = MainWindow()
+
+    result = window._ensure_wireatlas_extension(
+        Path("office-map.wireatlas")
+    )
+
+    assert result == Path("office-map.wireatlas")
+
+
+def test_suggested_filename_uses_site_name(qapp):
+    window = MainWindow()
+    window.site_name_input.setText("Main Office")
+
+    assert (
+        window._suggested_filename()
+        == "Main Office.wireatlas"
+    )
 
 def test_site_name_edit_updates_network_map(qapp):
     window = MainWindow()
@@ -149,3 +178,161 @@ def test_add_device_marks_document_dirty(qapp):
     assert window.document.dirty is True
     assert window.windowTitle() == "WireAtlas — Untitled Network *"
 
+
+def test_save_existing_path_saves_and_clears_dirty(
+    qapp,
+    monkeypatch,
+    tmp_path,
+):
+    window = MainWindow()
+    window.site_name_input.setText("Office")
+
+    path = tmp_path / "office.wireatlas"
+    window.document.current_path = path
+
+    calls = []
+
+    def fake_save(network_map, save_path):
+        calls.append((network_map, save_path))
+
+    monkeypatch.setattr(
+        "wireatlas.ui.main_window.save_network_map",
+        fake_save,
+    )
+
+    assert window._save() is True
+    assert calls == [(window.network_map, path)]
+    assert window.document.dirty is False
+    assert window.document.current_path == path
+
+
+def test_save_as_appends_extension_and_adopts_path_after_success(
+    qapp,
+    monkeypatch,
+    tmp_path,
+):
+    window = MainWindow()
+    window.site_name_input.setText("Office")
+
+    selected = tmp_path / "office-map"
+    saved = []
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (
+            str(selected),
+            "WireAtlas Network Maps (*.wireatlas)",
+        ),
+    )
+
+    monkeypatch.setattr(
+        "wireatlas.ui.main_window.save_network_map",
+        lambda network_map, path: saved.append(
+            (network_map, path)
+        ),
+    )
+
+    assert window._save_as() is True
+
+    expected = tmp_path / "office-map.wireatlas"
+    assert saved == [(window.network_map, expected)]
+    assert window.document.current_path == expected
+    assert window.document.dirty is False
+
+
+def test_save_as_cancel_returns_false_without_changing_state(
+    qapp,
+    monkeypatch,
+):
+    window = MainWindow()
+    window.site_name_input.setText("Office")
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: ("", ""),
+    )
+
+    assert window._save_as() is False
+    assert window.document.current_path is None
+    assert window.document.dirty is True
+
+
+def test_failed_save_as_keeps_dirty_and_does_not_adopt_path(
+    qapp,
+    monkeypatch,
+    tmp_path,
+):
+    window = MainWindow()
+    window.site_name_input.setText("Office")
+
+    selected = tmp_path / "broken"
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(selected), ""),
+    )
+
+    def fail_save(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(
+        "wireatlas.ui.main_window.save_network_map",
+        fail_save,
+    )
+
+    monkeypatch.setattr(
+        window,
+        "_show_save_error",
+        lambda error: None,
+    )
+
+    assert window._save_as() is False
+    assert window.document.current_path is None
+    assert window.document.dirty is True  
+
+
+def test_save_action_uses_save_workflow(
+    qapp,
+    monkeypatch,
+    tmp_path,
+):
+    window = MainWindow()
+    window.site_name_input.setText("Office")
+
+    path = tmp_path / "office.wireatlas"
+    window.document.current_path = path
+
+    saved = []
+
+    monkeypatch.setattr(
+        "wireatlas.ui.main_window.save_network_map",
+        lambda network_map, save_path: saved.append(
+            (network_map, save_path)
+        ),
+    )
+
+    window.save_action.trigger()
+
+    assert saved == [(window.network_map, path)]
+    assert window.document.dirty is False
+
+def test_save_as_action_uses_save_as_workflow(
+    qapp,
+    monkeypatch,
+):
+    window = MainWindow()
+
+    calls = []
+
+    monkeypatch.setattr(
+        window,
+        "_save_as",
+        lambda: calls.append("save-as") or True,
+    )
+
+    window.save_as_action.trigger()
+
+    assert calls == ["save-as"]
