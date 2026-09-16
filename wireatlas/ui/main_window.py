@@ -21,7 +21,11 @@ from wireatlas.models.network_map import NetworkMap
 from wireatlas.ui.device_details import DeviceDetailsPanel
 from wireatlas.ui.device_dialog import DeviceDialog
 from wireatlas.ui.topology_view import TopologyView
-from wireatlas.core.storage import save_network_map
+from wireatlas.core.storage import (
+    load_network_map,
+    save_network_map,
+)
+from wireatlas.core.validation import validate_network_map_data
 
 class MainWindow(QMainWindow):
     def __init__(self, parent=None):
@@ -31,8 +35,16 @@ class MainWindow(QMainWindow):
 
         self._build_toolbar()
         self._build_central_widget()
+        self.open_action.triggered.connect(
+            self._open_document
+        )
+
         self.save_action.triggered.connect(
             self._save
+        )
+
+        self.save_as_action.triggered.connect(
+            lambda: self._save_as()
         )
 
         self.add_device_action.triggered.connect(
@@ -41,10 +53,6 @@ class MainWindow(QMainWindow):
 
         self.topology_view.device_selected.connect(
             self._show_device_details
-        )
-
-        self.save_as_action.triggered.connect(
-            lambda: self._save_as()
         )
 
         self.statusBar().showMessage("Ready")
@@ -209,6 +217,96 @@ class MainWindow(QMainWindow):
     def _new_document(self) -> None:
         self.document.new_map()
         self._rebuild_from_document() 
+
+    def _open_document(self) -> bool:
+        filename, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open WireAtlas Network Map",
+            "",
+            "WireAtlas Network Maps (*.wireatlas)",
+        )
+
+        if not filename:
+            return False
+
+        path = Path(filename)
+
+        try:
+            loaded_map = load_network_map(path)
+        except Exception as error:
+            self._show_open_error(error)
+            return False
+
+        warnings = validate_network_map_data(
+            loaded_map
+        )
+
+        if warnings and not self._confirm_open_warnings(
+            warnings
+        ):
+            return False
+
+        self.document.replace_map(
+            loaded_map,
+            path,
+        )
+        self._rebuild_from_document()
+
+        return True
+
+    def _confirm_open_warnings(
+        self,
+        warnings: list[str],
+    ) -> bool:
+        message = QMessageBox(self)
+
+        message.setIcon(
+            QMessageBox.Icon.Warning
+        )
+
+        message.setWindowTitle(
+            "Network Map Warnings"
+        )
+
+        message.setText(
+            "WireAtlas found issues in this network map."
+        )
+
+        message.setInformativeText(
+            "The file opened successfully, but some "
+            "network data may need attention:\n\n"
+            + "\n".join(
+                f"• {warning}"
+                for warning in warnings
+            )
+            + "\n\nYou can continue working with the map, "
+            "but affected items should be reviewed."
+        )
+
+        open_button = message.addButton(
+            "Open Anyway",
+            QMessageBox.ButtonRole.AcceptRole,
+        )
+
+        message.addButton(
+            "Cancel",
+            QMessageBox.ButtonRole.RejectRole,
+        )
+
+        message.exec()
+
+        return message.clickedButton() is open_button
+
+    def _show_open_error(
+        self,
+        error: Exception,
+    ) -> None:
+        QMessageBox.critical(
+            self,
+            "Open Failed",
+            "Could not open the network map.\n\n"
+            f"{error}",
+        )
     
     def _update_window_title(self) -> None:
         marker = " *" if self.document.dirty else ""

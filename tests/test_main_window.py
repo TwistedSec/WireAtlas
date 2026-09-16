@@ -5,6 +5,7 @@ from wireatlas.models.device import Device, DeviceType
 from wireatlas.ui.main_window import MainWindow
 import wireatlas.ui.main_window as main_window_module
 from wireatlas.models.network_map import NetworkMap
+from wireatlas.core.storage import WireAtlasFileError
 
 def test_main_window_starts_with_untitled_network(qapp):
     window = MainWindow()
@@ -394,3 +395,263 @@ def test_new_document_resets_clean_map_and_gui(qapp):
     assert window.site_name_input.text() == "Untitled Network"
     assert window.topology_view.graphics_scene.items() == []
     assert window.windowTitle() == "WireAtlas — Untitled Network"
+
+def test_open_valid_map_replaces_document_and_rebuilds_gui(
+    qapp,
+    monkeypatch,
+    tmp_path,
+):
+    window = MainWindow()
+
+    path = tmp_path / "loaded.wireatlas"
+
+    device = Device(
+        name="Router",
+        device_type=DeviceType.FIREWALL_ROUTER,
+        x=300.0,
+        y=140.0,
+    )
+
+    loaded = NetworkMap(
+        site_name="Loaded Office",
+        root_device_id=device.id,
+        devices=[device],
+    )
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileName",
+        lambda *args, **kwargs: (str(path), ""),
+    )
+
+    monkeypatch.setattr(
+        "wireatlas.ui.main_window.load_network_map",
+        lambda selected_path: loaded,
+    )
+
+    monkeypatch.setattr(
+        "wireatlas.ui.main_window.validate_network_map_data",
+        lambda network_map: [],
+    )
+
+    assert window._open_document() is True
+
+    assert window.network_map is loaded
+    assert window.document.current_path == path
+    assert window.document.dirty is False
+    assert window.site_name_input.text() == "Loaded Office"
+
+    node = window.topology_view.node_for_device(device.id)
+
+    assert node is not None
+    assert node.pos().x() == 300.0
+    assert node.pos().y() == 140.0
+
+def test_open_warning_cancel_leaves_current_document_untouched(
+    qapp,
+    monkeypatch,
+    tmp_path,
+):
+    window = MainWindow()
+    window.site_name_input.setText("Current Work")
+
+    original_map = window.network_map
+    original_dirty = window.document.dirty
+
+    path = tmp_path / "warning.wireatlas"
+    loaded = NetworkMap(site_name="Warning Site")
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileName",
+        lambda *args, **kwargs: (str(path), ""),
+    )
+
+    monkeypatch.setattr(
+        "wireatlas.ui.main_window.load_network_map",
+        lambda selected_path: loaded,
+    )
+
+    monkeypatch.setattr(
+        "wireatlas.ui.main_window.validate_network_map_data",
+        lambda network_map: ["Bad IP"],
+    )
+
+    monkeypatch.setattr(
+        window,
+        "_confirm_open_warnings",
+        lambda warnings: False,
+    )
+
+    assert window._open_document() is False
+
+    assert window.network_map is original_map
+    assert window.network_map.site_name == "Current Work"
+    assert window.document.dirty is original_dirty
+
+def test_confirm_open_warnings_accepts_open_anyway(
+    qapp,
+    monkeypatch,
+):
+    window = MainWindow()
+
+    class FakeMessageBox:
+        class Icon:
+            Warning = object()
+
+        class ButtonRole:
+            AcceptRole = object()
+            RejectRole = object()
+
+        def __init__(self, parent=None):
+            self.informative_text = ""
+            self.buttons = []
+            self.clicked = None
+
+        def setIcon(self, icon):
+            pass
+
+        def setWindowTitle(self, title):
+            pass
+
+        def setText(self, text):
+            pass
+
+        def setInformativeText(self, text):
+            self.informative_text = text
+
+        def addButton(self, text, role):
+            button = object()
+            self.buttons.append((text, role, button))
+
+            if text == "Open Anyway":
+                self.clicked = button
+
+            return button
+
+        def exec(self):
+            pass
+
+        def clickedButton(self):
+            return self.clicked
+
+    monkeypatch.setattr(
+        "wireatlas.ui.main_window.QMessageBox",
+        FakeMessageBox,
+    )
+    assert window._confirm_open_warnings(
+        ["Bad IP", "Bad MAC"]
+    ) is True
+
+def test_open_warning_accept_replaces_document(
+    qapp,
+    monkeypatch,
+    tmp_path,
+):
+    window = MainWindow()
+
+    path = tmp_path / "warning.wireatlas"
+    loaded = NetworkMap(site_name="Warning Site")
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileName",
+        lambda *args, **kwargs: (str(path), ""),
+    )
+
+    monkeypatch.setattr(
+        "wireatlas.ui.main_window.load_network_map",
+        lambda selected_path: loaded,
+    )
+
+    monkeypatch.setattr(
+        "wireatlas.ui.main_window.validate_network_map_data",
+        lambda network_map: ["Bad IP"],
+    )
+
+    monkeypatch.setattr(
+        window,
+        "_confirm_open_warnings",
+        lambda warnings: True,
+    )
+
+    assert window._open_document() is True
+    assert window.network_map is loaded
+    assert window.document.current_path == path
+    assert window.document.dirty is False
+
+def test_open_error_leaves_current_document_untouched(
+    qapp,
+    monkeypatch,
+    tmp_path,
+):
+    window = MainWindow()
+    window.site_name_input.setText("Current Work")
+
+    original_map = window.network_map
+    original_path = window.document.current_path
+    original_dirty = window.document.dirty
+
+    path = tmp_path / "broken.wireatlas"
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileName",
+        lambda *args, **kwargs: (str(path), ""),
+    )
+
+    def fail_load(selected_path):
+        raise WireAtlasFileError(
+            "File is not valid WireAtlas data"
+        )
+
+    monkeypatch.setattr(
+        "wireatlas.ui.main_window.load_network_map",
+        fail_load,
+    )
+
+    monkeypatch.setattr(
+        window,
+        "_show_open_error",
+        lambda error: None,
+        raising=False,
+    )
+
+    assert window._open_document() is False
+
+    assert window.network_map is original_map
+    assert window.document.current_path is original_path
+    assert window.document.dirty is original_dirty
+    assert window.site_name_input.text() == "Current Work"
+
+def test_open_action_uses_open_workflow(
+    qapp,
+    monkeypatch,
+    tmp_path,
+):
+    window = MainWindow()
+
+    path = tmp_path / "loaded.wireatlas"
+    loaded = NetworkMap(site_name="Loaded Office")
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileName",
+        lambda *args, **kwargs: (str(path), ""),
+    )
+
+    monkeypatch.setattr(
+        "wireatlas.ui.main_window.load_network_map",
+        lambda selected_path: loaded,
+    )
+
+    monkeypatch.setattr(
+        "wireatlas.ui.main_window.validate_network_map_data",
+        lambda network_map: [],
+    )
+
+    window.open_action.trigger()
+
+    assert window.network_map is loaded
+    assert window.document.current_path == path
+    assert window.document.dirty is False
