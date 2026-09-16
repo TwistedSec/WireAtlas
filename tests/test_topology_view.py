@@ -55,3 +55,36 @@ def test_topology_view_emits_selected_device_id(qapp):
     qapp.processEvents()
 
     assert selected_ids == [device.id]
+
+def test_add_device_at_saved_position_preserves_coordinates(qapp):
+    view = TopologyView()
+    device = Device(
+        name="Loaded Router",
+        device_type=DeviceType.FIREWALL_ROUTER,
+        x=515.0,
+        y=225.0,
+    )
+
+    node = view.add_device_at_saved_position(device)
+
+    assert device.x == 515.0
+    assert device.y == 225.0
+    assert node.pos().x() == 515.0
+    assert node.pos().y() == 225.0
+    assert view.node_for_device(device.id) is node
+
+
+def test_clear_devices_removes_nodes_and_lookup_entries(qapp):
+    view = TopologyView()
+    device = Device(
+        name="Switch",
+        device_type=DeviceType.SWITCH,
+    )
+
+    view.add_device(device)
+    assert view.node_for_device(device.id) is not None
+
+    view.clear_devices()
+
+    assert view.node_for_device(device.id) is None
+    assert view.graphics_scene.items() == []

@@ -95,6 +95,22 @@ class TopologyView(QGraphicsView):
 
         return node
 
+    def add_device_at_saved_position(
+        self,
+        device: Device,
+    ) -> DeviceNode:
+        node = DeviceNode(device)
+        node.setPos(device.x, device.y)
+
+        self.graphics_scene.addItem(node)
+        self._nodes[device.id] = node
+
+        return node
+
+    def clear_devices(self) -> None:
+        self.graphics_scene.clear()
+        self._nodes.clear()
+
     def node_for_device(
         self,
         device_id: str,
