@@ -1,6 +1,6 @@
 ﻿from pathlib import Path
 from PySide6.QtWidgets import QFileDialog
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSignalBlocker, Qt
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -184,6 +184,31 @@ class MainWindow(QMainWindow):
             "Could not save the network map.\n\n"
             f"{error}",
         )
+
+    def _rebuild_from_document(self) -> None:
+        self.topology_view.clear_devices()
+        self.details_panel.clear()
+
+        blocker = QSignalBlocker(
+            self.site_name_input
+        )
+
+        self.site_name_input.setText(
+            self.network_map.site_name
+        )
+
+        del blocker
+
+        for device in self.network_map.devices:
+            self.topology_view.add_device_at_saved_position(
+                device
+            )
+
+        self._update_window_title()
+
+    def _new_document(self) -> None:
+        self.document.new_map()
+        self._rebuild_from_document() 
     
     def _update_window_title(self) -> None:
         marker = " *" if self.document.dirty else ""

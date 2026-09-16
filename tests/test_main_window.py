@@ -4,7 +4,7 @@ from PySide6.QtWidgets import QFileDialog
 from wireatlas.models.device import Device, DeviceType
 from wireatlas.ui.main_window import MainWindow
 import wireatlas.ui.main_window as main_window_module
-
+from wireatlas.models.network_map import NetworkMap
 
 def test_main_window_starts_with_untitled_network(qapp):
     window = MainWindow()
@@ -336,3 +336,61 @@ def test_save_as_action_uses_save_as_workflow(
     window.save_as_action.trigger()
 
     assert calls == ["save-as"]
+
+
+def test_rebuild_from_document_restores_nodes_and_clears_details(
+    qapp,
+    tmp_path,
+):
+    window = MainWindow()
+
+    device = Device(
+        name="Loaded Router",
+        device_type=DeviceType.FIREWALL_ROUTER,
+        x=420.0,
+        y=180.0,
+    )
+
+    network_map = NetworkMap(
+        site_name="Loaded Site",
+        root_device_id=device.id,
+        devices=[device],
+    )
+
+    window.document.replace_map(
+        network_map,
+        tmp_path / "loaded.wireatlas",
+    )
+
+    window._rebuild_from_document()
+
+    node = window.topology_view.node_for_device(device.id)
+
+    assert window.site_name_input.text() == "Loaded Site"
+    assert node is not None
+    assert node.pos().x() == 420.0
+    assert node.pos().y() == 180.0
+    assert window.network_map.root_device_id == device.id
+    assert window.details_panel.form_widget.isHidden()
+    assert window.document.dirty is False
+
+def test_new_document_resets_clean_map_and_gui(qapp):
+    window = MainWindow()
+
+    device = Device(
+        name="Router",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+
+    window.add_device(device)
+    window.site_name_input.setText("Old Site")
+
+    window._new_document()
+
+    assert window.network_map.site_name == "Untitled Network"
+    assert window.network_map.devices == []
+    assert window.document.current_path is None
+    assert window.document.dirty is False
+    assert window.site_name_input.text() == "Untitled Network"
+    assert window.topology_view.graphics_scene.items() == []
+    assert window.windowTitle() == "WireAtlas — Untitled Network"
