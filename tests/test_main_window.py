@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QDialog
+﻿from PySide6.QtWidgets import QDialog
 
 from wireatlas.models.device import Device, DeviceType
 from wireatlas.ui.main_window import MainWindow
@@ -119,3 +119,33 @@ def test_add_device_action_uses_device_dialog(qapp, monkeypatch):
     window.add_device_action.trigger()
 
     assert window.network_map.devices == [router]
+
+def test_main_window_starts_clean_with_site_in_title(qapp):
+    window = MainWindow()
+
+    assert window.document.dirty is False
+    assert window.windowTitle() == "WireAtlas — Untitled Network"
+
+
+def test_site_name_change_marks_document_dirty_and_updates_title(qapp):
+    window = MainWindow()
+
+    window.site_name_input.setText("Dental Office")
+
+    assert window.network_map.site_name == "Dental Office"
+    assert window.document.dirty is True
+    assert window.windowTitle() == "WireAtlas — Dental Office *"
+
+
+def test_add_device_marks_document_dirty(qapp):
+    window = MainWindow()
+    device = Device(
+        name="Router",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+
+    window.add_device(device)
+
+    assert window.document.dirty is True
+    assert window.windowTitle() == "WireAtlas — Untitled Network *"
+

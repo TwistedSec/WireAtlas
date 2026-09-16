@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt
+﻿from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from wireatlas.core.document import MapDocument
 from wireatlas.models.device import Device, DeviceType
 from wireatlas.models.network_map import NetworkMap
 from wireatlas.ui.device_details import DeviceDetailsPanel
@@ -22,11 +23,7 @@ class MainWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        self.network_map = NetworkMap(
-            site_name="Untitled Network"
-        )
-
-        self.setWindowTitle("WireAtlas")
+        self.document = MapDocument()
 
         self._build_toolbar()
         self._build_central_widget()
@@ -40,6 +37,11 @@ class MainWindow(QMainWindow):
         )
 
         self.statusBar().showMessage("Ready")
+        self._update_window_title()
+
+    @property
+    def network_map(self) -> NetworkMap:
+        return self.document.network_map
 
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Main")
@@ -98,8 +100,19 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(central_widget)
 
+    def _update_window_title(self) -> None:
+        marker = " *" if self.document.dirty else ""
+        self.setWindowTitle(
+            f"WireAtlas — {self.network_map.site_name}{marker}"
+        )
+
+    def _mark_dirty(self) -> None:
+        self.document.mark_dirty()
+        self._update_window_title()
+
     def _update_site_name(self, value: str) -> None:
         self.network_map.site_name = value
+        self._mark_dirty()
 
     def add_device(self, device: Device) -> None:
         if (
@@ -111,6 +124,7 @@ class MainWindow(QMainWindow):
 
         self.network_map.devices.append(device)
         self.topology_view.add_device(device)
+        self._mark_dirty()
 
     def _open_add_device_dialog(self) -> None:
         dialog = DeviceDialog(self)
