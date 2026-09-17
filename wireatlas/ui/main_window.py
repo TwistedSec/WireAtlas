@@ -35,8 +35,13 @@ class MainWindow(QMainWindow):
 
         self._build_toolbar()
         self._build_central_widget()
+
+        self.new_action.triggered.connect(
+            lambda: self._request_new_document()
+        )
+
         self.open_action.triggered.connect(
-            self._open_document
+            lambda: self._request_open_document()
         )
 
         self.save_action.triggered.connect(
@@ -214,11 +219,56 @@ class MainWindow(QMainWindow):
 
         self._update_window_title()
 
+    def _ask_unsaved_changes(
+        self,
+    ) -> QMessageBox.StandardButton:
+        return QMessageBox.question(
+            self,
+            "Unsaved Changes",
+            f"Save changes to "
+            f"{self.network_map.site_name}?\n\n"
+            "Your changes will be lost if "
+            "you don’t save them.",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+
+    def _confirm_discard_or_save(self) -> bool:
+        if not self.document.dirty:
+            return True
+
+        choice = self._ask_unsaved_changes()
+
+        if choice == QMessageBox.StandardButton.Cancel:
+            return False
+
+        if choice == QMessageBox.StandardButton.Discard:
+            return True
+
+        if choice == QMessageBox.StandardButton.Save:
+            return self._save()
+
+        return False
+
     def _new_document(self) -> None:
         self.document.new_map()
-        self._rebuild_from_document() 
+        self._rebuild_from_document()
 
-    def _open_document(self) -> bool:
+    def _request_new_document(self) -> None:
+        if not self._confirm_discard_or_save():
+            return
+
+        self._new_document()
+
+    def _request_open_document(self) -> bool:
+        if not self._confirm_discard_or_save():
+            return False
+
+        return self._open_document_from_dialog()
+
+    def _open_document_from_dialog(self) -> bool:
         filename, _ = QFileDialog.getOpenFileName(
             self,
             "Open WireAtlas Network Map",
@@ -307,7 +357,7 @@ class MainWindow(QMainWindow):
             "Could not open the network map.\n\n"
             f"{error}",
         )
-    
+
     def _update_window_title(self) -> None:
         marker = " *" if self.document.dirty else ""
         self.setWindowTitle(

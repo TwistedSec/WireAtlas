@@ -1,4 +1,6 @@
-﻿from PySide6.QtWidgets import QDialog
+﻿import pytest
+from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QDialog
 from pathlib import Path
 from PySide6.QtWidgets import QFileDialog
 from wireatlas.models.device import Device, DeviceType
@@ -434,7 +436,7 @@ def test_open_valid_map_replaces_document_and_rebuilds_gui(
         lambda network_map: [],
     )
 
-    assert window._open_document() is True
+    assert window._open_document_from_dialog() is True
 
     assert window.network_map is loaded
     assert window.document.current_path == path
@@ -483,7 +485,7 @@ def test_open_warning_cancel_leaves_current_document_untouched(
         lambda warnings: False,
     )
 
-    assert window._open_document() is False
+    assert window._open_document_from_dialog() is False
 
     assert window.network_map is original_map
     assert window.network_map.site_name == "Current Work"
@@ -575,7 +577,7 @@ def test_open_warning_accept_replaces_document(
         lambda warnings: True,
     )
 
-    assert window._open_document() is True
+    assert window._open_document_from_dialog() is True
     assert window.network_map is loaded
     assert window.document.current_path == path
     assert window.document.dirty is False
@@ -617,7 +619,7 @@ def test_open_error_leaves_current_document_untouched(
         raising=False,
     )
 
-    assert window._open_document() is False
+    assert window._open_document_from_dialog() is False
 
     assert window.network_map is original_map
     assert window.document.current_path is original_path
@@ -655,3 +657,186 @@ def test_open_action_uses_open_workflow(
     assert window.network_map is loaded
     assert window.document.current_path == path
     assert window.document.dirty is False
+
+def test_confirm_discard_or_save_allows_clean_document(
+    qapp,
+    monkeypatch,
+):
+    window = MainWindow()
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: pytest.fail(
+            "clean document should not prompt"
+        ),
+    )
+
+    assert window._confirm_discard_or_save() is True
+
+def test_unsaved_cancel_blocks_action(qapp, monkeypatch):
+    window = MainWindow()
+    window.document.mark_dirty()
+
+    monkeypatch.setattr(
+        window,
+        "_ask_unsaved_changes",
+        lambda: QMessageBox.StandardButton.Cancel,
+    )
+
+    assert window._confirm_discard_or_save() is False
+
+
+def test_unsaved_discard_allows_action(qapp, monkeypatch):
+    window = MainWindow()
+    window.document.mark_dirty()
+
+    monkeypatch.setattr(
+        window,
+        "_ask_unsaved_changes",
+        lambda: QMessageBox.StandardButton.Discard,
+    )
+
+    assert window._confirm_discard_or_save() is True
+
+
+def test_unsaved_save_allows_action_only_after_success(
+    qapp,
+    monkeypatch,
+):
+    window = MainWindow()
+    window.document.mark_dirty()
+
+    monkeypatch.setattr(
+        window,
+        "_ask_unsaved_changes",
+        lambda: QMessageBox.StandardButton.Save,
+    )
+
+    monkeypatch.setattr(
+        window,
+        "_save",
+        lambda: True,
+    )
+
+    assert window._confirm_discard_or_save() is True
+
+
+def test_unsaved_save_failure_blocks_action(
+    qapp,
+    monkeypatch,
+):
+    window = MainWindow()
+    window.document.mark_dirty()
+
+    monkeypatch.setattr(
+        window,
+        "_ask_unsaved_changes",
+        lambda: QMessageBox.StandardButton.Save,
+    )
+
+    monkeypatch.setattr(
+        window,
+        "_save",
+        lambda: False,
+    )
+
+    assert window._confirm_discard_or_save() is False
+
+def test_dirty_new_cancel_keeps_current_document(
+    qapp,
+    monkeypatch,
+):
+    window = MainWindow()
+    window.site_name_input.setText("Current Work")
+
+    original_map = window.network_map
+
+    monkeypatch.setattr(
+        window,
+        "_confirm_discard_or_save",
+        lambda: False,
+    )
+
+    window._request_new_document()
+
+    assert window.network_map is original_map
+    assert window.network_map.site_name == "Current Work"
+
+
+def test_dirty_new_proceeds_after_confirmation(
+    qapp,
+    monkeypatch,
+):
+    window = MainWindow()
+    window.site_name_input.setText("Current Work")
+
+    monkeypatch.setattr(
+        window,
+        "_confirm_discard_or_save",
+        lambda: True,
+    )
+
+    window._request_new_document()
+
+    assert window.network_map.site_name == "Untitled Network"
+    assert window.document.dirty is False
+
+def test_new_action_uses_guarded_new_workflow(
+    qapp,
+    monkeypatch,
+):
+    window = MainWindow()
+
+    calls = []
+
+    monkeypatch.setattr(
+        window,
+        "_request_new_document",
+        lambda: calls.append("new"),
+    )
+
+    window.new_action.trigger()
+
+    assert calls == ["new"]
+
+def test_dirty_open_cancel_does_not_open_dialog(
+    qapp,
+    monkeypatch,
+):
+    window = MainWindow()
+    window.document.mark_dirty()
+
+    monkeypatch.setattr(
+        window,
+        "_confirm_discard_or_save",
+        lambda: False,
+    )
+
+    monkeypatch.setattr(
+        window,
+        "_open_document_from_dialog",
+        lambda: pytest.fail(
+            "open dialog should not run"
+        ),
+    )
+
+    assert window._request_open_document() is False
+
+def test_open_action_uses_guarded_open_workflow(
+    qapp,
+    monkeypatch,
+):
+    window = MainWindow()
+
+    calls = []
+
+    monkeypatch.setattr(
+        window,
+        "_request_open_document",
+        lambda: calls.append("open"),
+    )
+
+    window.open_action.trigger()
+
+    assert calls == ["open"]
