@@ -1,4 +1,5 @@
-﻿import pytest
+﻿from PySide6.QtGui import QCloseEvent
+import pytest
 from PySide6.QtWidgets import QMessageBox
 from PySide6.QtWidgets import QDialog
 from pathlib import Path
@@ -840,3 +841,39 @@ def test_open_action_uses_guarded_open_workflow(
     window.open_action.trigger()
 
     assert calls == ["open"]
+
+def test_close_event_ignores_close_when_unsaved_action_cancelled(
+    qapp,
+    monkeypatch,
+):
+    window = MainWindow()
+
+    monkeypatch.setattr(
+        window,
+        "_confirm_discard_or_save",
+        lambda: False,
+    )
+
+    event = QCloseEvent()
+
+    window.closeEvent(event)
+
+    assert event.isAccepted() is False
+
+def test_close_event_accepts_close_after_confirmation(
+    qapp,
+    monkeypatch,
+):
+    window = MainWindow()
+
+    monkeypatch.setattr(
+        window,
+        "_confirm_discard_or_save",
+        lambda: True,
+    )
+
+    event = QCloseEvent()
+
+    window.closeEvent(event)
+
+    assert event.isAccepted() is True

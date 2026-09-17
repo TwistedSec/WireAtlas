@@ -268,6 +268,12 @@ class MainWindow(QMainWindow):
 
         return self._open_document_from_dialog()
 
+    def closeEvent(self, event) -> None:
+        if self._confirm_discard_or_save():
+            event.accept()
+        else:
+            event.ignore()
+
     def _open_document_from_dialog(self) -> bool:
         filename, _ = QFileDialog.getOpenFileName(
             self,
