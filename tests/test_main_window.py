@@ -877,3 +877,82 @@ def test_close_event_accepts_close_after_confirmation(
     window.closeEvent(event)
 
     assert event.isAccepted() is True
+
+
+def test_save_without_path_delegates_to_save_as(
+    qapp,
+    monkeypatch,
+):
+    window = MainWindow()
+
+    calls = []
+
+    monkeypatch.setattr(
+        window,
+        "_save_as",
+        lambda: calls.append("save-as") or True,
+    )
+
+    assert window._save() is True
+    assert calls == ["save-as"]
+
+def test_failed_save_as_preserves_existing_current_path(
+    qapp,
+    monkeypatch,
+    tmp_path,
+):
+    window = MainWindow()
+
+    old_path = tmp_path / "existing.wireatlas"
+    new_path = tmp_path / "replacement.wireatlas"
+
+    window.document.mark_saved(old_path)
+    window.document.mark_dirty()
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(new_path), ""),
+    )
+
+    def fail_save(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(
+        main_window_module,
+        "save_network_map",
+        fail_save,
+    )
+
+    monkeypatch.setattr(
+        window,
+        "_show_save_error",
+        lambda error: None,
+    )
+
+    assert window._save_as() is False
+    assert window.document.current_path == old_path
+    assert window.document.dirty is True
+
+def test_open_picker_cancel_leaves_document_unchanged(
+    qapp,
+    monkeypatch,
+):
+    window = MainWindow()
+    window.site_name_input.setText("Current Work")
+
+    original_map = window.network_map
+    original_path = window.document.current_path
+    original_dirty = window.document.dirty
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileName",
+        lambda *args, **kwargs: ("", ""),
+    )
+
+    assert window._open_document_from_dialog() is False
+    assert window.network_map is original_map
+    assert window.document.current_path == original_path
+    assert window.document.dirty == original_dirty
+    assert window.network_map.site_name == "Current Work"
