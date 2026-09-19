@@ -15,12 +15,14 @@ from PySide6.QtWidgets import (
     QFileDialog,
 )
 
+from wireatlas.models.connection import Connection
 from wireatlas.core.document import MapDocument
 from wireatlas.models.device import Device, DeviceType
 from wireatlas.models.network_map import NetworkMap
 from wireatlas.ui.device_details import DeviceDetailsPanel
 from wireatlas.ui.device_dialog import DeviceDialog
 from wireatlas.ui.topology_view import TopologyView
+from wireatlas.ui.connection_dialog import ConnectionDialog
 from wireatlas.core.storage import (
     load_network_map,
     save_network_map,
@@ -56,6 +58,18 @@ class MainWindow(QMainWindow):
             self._open_add_device_dialog
         )
 
+        self.add_connection_action.triggered.connect(
+            lambda: self._open_add_connection_dialog()
+        )
+
+        self.delete_connection_action.triggered.connect(
+        self._delete_selected_connection
+)
+
+        self.topology_view.connection_selected.connect(
+            self._select_connection
+        )
+
         self.topology_view.device_selected.connect(
             self._show_device_details
         )
@@ -76,16 +90,22 @@ class MainWindow(QMainWindow):
         self.save_action = toolbar.addAction("Save")
         self.save_as_action = toolbar.addAction("Save As")
         self.add_device_action = toolbar.addAction("Add Device")
+
         self.add_connection_action = toolbar.addAction(
             "Add Connection"
-    )
+        )
+
+        self.delete_connection_action = toolbar.addAction(
+            "Delete Connection"
+        )
+
         self.export_pdf_action = toolbar.addAction(
             "Export PDF"
-    )
+        )
 
         self.add_connection_action.setEnabled(False)
+        self.delete_connection_action.setEnabled(False)
         self.export_pdf_action.setEnabled(False)
-
 
     def _build_central_widget(self) -> None:
         central_widget = QWidget()
@@ -199,6 +219,9 @@ class MainWindow(QMainWindow):
         )
 
     def _rebuild_from_document(self) -> None:
+        self.selected_connection_id = None
+        self.delete_connection_action.setEnabled(False)
+
         self.topology_view.clear_devices()
         self.details_panel.clear()
 
@@ -216,6 +239,15 @@ class MainWindow(QMainWindow):
             self.topology_view.add_device_at_saved_position(
                 device
             )
+
+        for connection in self.network_map.connections:
+            self.topology_view.add_connection(
+                connection
+            )
+
+        self.add_connection_action.setEnabled(
+            len(self.network_map.devices) >= 2
+        )
 
         self._update_window_title()
 
@@ -393,6 +425,87 @@ class MainWindow(QMainWindow):
         self.network_map.devices.append(device)
         self.topology_view.add_device(device)
         self._mark_dirty()
+        self.add_connection_action.setEnabled(
+            len(self.network_map.devices) >= 2
+        )
+
+    def add_connection(self, connection: Connection) -> None:
+        duplicate = any(
+        (
+            (
+                existing.source_device_id
+                == connection.source_device_id
+                and existing.destination_device_id
+                == connection.destination_device_id
+                and existing.source_interface
+                == connection.source_interface
+                and existing.destination_interface
+                == connection.destination_interface
+            )
+            or
+            (
+                existing.source_device_id
+                == connection.destination_device_id
+                and existing.destination_device_id
+                == connection.source_device_id
+                and existing.source_interface
+                == connection.destination_interface
+                and existing.destination_interface
+                == connection.source_interface
+            )
+        )
+        and existing.link_type
+        == connection.link_type
+        for existing in self.network_map.connections
+    )
+
+        if duplicate:
+            return
+
+        self.network_map.connections.append(connection)
+
+        self.topology_view.add_connection(
+        connection
+        )
+
+        self._mark_dirty()
+
+    def _select_connection(
+        self,
+        connection_id: str,
+    ) -> None:
+        if not connection_id:
+            self.selected_connection_id = None
+            self.delete_connection_action.setEnabled(False)
+            return
+
+        self.selected_connection_id = connection_id
+        self.delete_connection_action.setEnabled(True)
+
+    def _delete_selected_connection(self) -> None:
+        connection_id = getattr(
+            self,
+            "selected_connection_id",
+            None,
+        )
+
+        if connection_id is None:
+            return
+
+        self.network_map.connections = [
+            connection
+            for connection in self.network_map.connections
+            if connection.id != connection_id
+        ]
+
+        self.topology_view.remove_connection(
+            connection_id
+        )
+
+        self.selected_connection_id = None
+        self.delete_connection_action.setEnabled(False)
+
+        self._mark_dirty()
 
     def _open_add_device_dialog(self) -> None:
         dialog = DeviceDialog(self)
@@ -400,10 +513,24 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.add_device(dialog.build_device())
 
+    def _open_add_connection_dialog(self) -> None:
+        dialog = ConnectionDialog(
+            self.network_map.devices,
+            self,
+        )
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.add_connection(
+                dialog.build_connection()
+        )
+
     def _show_device_details(
         self,
         device_id: str,
     ) -> None:
+        self.selected_connection_id = None
+        self.delete_connection_action.setEnabled(False)
+
         device = next(
             (
                 device

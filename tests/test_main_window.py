@@ -9,6 +9,7 @@ from wireatlas.ui.main_window import MainWindow
 import wireatlas.ui.main_window as main_window_module
 from wireatlas.models.network_map import NetworkMap
 from wireatlas.core.storage import WireAtlasFileError
+from wireatlas.models.connection import Connection, LinkType
 
 def test_main_window_starts_with_untitled_network(qapp):
     window = MainWindow()
@@ -956,3 +957,529 @@ def test_open_picker_cancel_leaves_document_unchanged(
     assert window.document.current_path == original_path
     assert window.document.dirty == original_dirty
     assert window.network_map.site_name == "Current Work"
+
+def test_add_connection_action_enables_after_second_device(qapp):
+    window = MainWindow()
+
+    firewall = Device(
+        name="Firewall",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+
+    switch = Device(
+        name="Main Switch",
+        device_type=DeviceType.SWITCH,
+    )
+
+    assert window.add_connection_action.isEnabled() is False
+
+    window.add_device(firewall)
+
+    assert window.add_connection_action.isEnabled() is False
+
+    window.add_device(switch)
+
+    assert window.add_connection_action.isEnabled() is True
+
+def test_rebuild_enables_add_connection_for_two_device_map(qapp):
+    window = MainWindow()
+
+    network_map = NetworkMap(
+        site_name="Office",
+        devices=[
+            Device(
+                name="Firewall",
+                device_type=DeviceType.FIREWALL_ROUTER,
+            ),
+            Device(
+                name="Main Switch",
+                device_type=DeviceType.SWITCH,
+            ),
+        ],
+    )
+
+    window.document.replace_map(network_map)
+
+    window._rebuild_from_document()
+
+    assert window.add_connection_action.isEnabled() is True
+
+def test_add_connection_action_uses_connection_dialog(
+    qapp,
+    monkeypatch,
+):
+    window = MainWindow()
+
+    calls = []
+
+    monkeypatch.setattr(
+        window,
+        "_open_add_connection_dialog",
+        lambda: calls.append("connection"),
+        raising=False,
+    )
+
+    window.add_connection_action.setEnabled(True)
+    window.add_connection_action.trigger()
+
+    assert calls == ["connection"]
+
+def test_open_add_connection_dialog_adds_connection(
+    qapp,
+    monkeypatch,
+):
+    window = MainWindow()
+
+    firewall = Device(
+        name="Firewall",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+
+    switch = Device(
+        name="Main Switch",
+        device_type=DeviceType.SWITCH,
+    )
+
+    window.add_device(firewall)
+    window.add_device(switch)
+
+    connection = Connection(
+        source_device_id=firewall.id,
+        destination_device_id=switch.id,
+        source_interface="igb2",
+        destination_interface="Gi1/0/24",
+        link_type=LinkType.TRUNK,
+    )
+
+    class FakeConnectionDialog:
+        def __init__(self, devices, parent=None):
+            self.devices = devices
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def build_connection(self):
+            return connection
+
+    monkeypatch.setattr(
+        main_window_module,
+        "ConnectionDialog",
+        FakeConnectionDialog,
+        raising=False,
+    )
+
+    window._open_add_connection_dialog()
+
+    assert window.network_map.connections == [
+        connection
+    ]
+
+def test_add_connection_adds_model_and_marks_dirty(qapp):
+    window = MainWindow()
+
+    firewall = Device(
+        name="Firewall",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+
+    switch = Device(
+        name="Main Switch",
+        device_type=DeviceType.SWITCH,
+    )
+
+    window.add_device(firewall)
+    window.add_device(switch)
+
+    window.document.dirty = False
+
+    connection = Connection(
+        source_device_id=firewall.id,
+        destination_device_id=switch.id,
+        source_interface="igb2",
+        destination_interface="Gi1/0/24",
+        link_type=LinkType.TRUNK,
+    )
+
+    window.add_connection(connection)
+
+    assert connection in window.network_map.connections
+    assert window.document.dirty is True
+
+def test_add_connection_adds_edge_to_topology(qapp, monkeypatch):
+    window = MainWindow()
+
+    firewall = Device(
+        name="Firewall",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+
+    switch = Device(
+        name="Main Switch",
+        device_type=DeviceType.SWITCH,
+    )
+
+    window.add_device(firewall)
+    window.add_device(switch)
+
+    connection = Connection(
+        source_device_id=firewall.id,
+        destination_device_id=switch.id,
+        source_interface="igb2",
+        destination_interface="Gi1/0/24",
+        link_type=LinkType.TRUNK,
+    )
+
+    calls = []
+
+    monkeypatch.setattr(
+        window.topology_view,
+        "add_connection",
+        lambda value: calls.append(value),
+    )
+
+    window.add_connection(connection)
+
+    assert calls == [connection]
+
+def test_rebuild_from_document_restores_connections(
+    qapp,
+    monkeypatch,
+):
+    window = MainWindow()
+
+    firewall = Device(
+        name="Firewall",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+
+    switch = Device(
+        name="Main Switch",
+        device_type=DeviceType.SWITCH,
+    )
+
+    connection = Connection(
+        source_device_id=firewall.id,
+        destination_device_id=switch.id,
+        source_interface="igb2",
+        destination_interface="Gi1/0/24",
+        link_type=LinkType.TRUNK,
+    )
+
+    network_map = NetworkMap(
+        site_name="Office",
+        devices=[firewall, switch],
+        connections=[connection],
+    )
+
+    window.document.replace_map(network_map)
+
+    calls = []
+
+    monkeypatch.setattr(
+        window.topology_view,
+        "add_connection",
+        lambda value: calls.append(value),
+    )
+
+    window._rebuild_from_document()
+
+    assert calls == [connection]
+
+def test_add_connection_rejects_exact_duplicate(qapp):
+    window = MainWindow()
+
+    firewall = Device(
+        name="Firewall",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+
+    switch = Device(
+        name="Main Switch",
+        device_type=DeviceType.SWITCH,
+    )
+
+    window.add_device(firewall)
+    window.add_device(switch)
+
+    first_connection = Connection(
+        source_device_id=firewall.id,
+        destination_device_id=switch.id,
+        source_interface="igb2",
+        destination_interface="Gi1/0/24",
+        link_type=LinkType.TRUNK,
+    )
+
+    duplicate_connection = Connection(
+        source_device_id=firewall.id,
+        destination_device_id=switch.id,
+        source_interface="igb2",
+        destination_interface="Gi1/0/24",
+        link_type=LinkType.TRUNK,
+    )
+
+    window.add_connection(first_connection)
+    window.add_connection(duplicate_connection)
+
+    assert len(window.network_map.connections) == 1
+
+def test_add_connection_rejects_reversed_duplicate(qapp):
+    window = MainWindow()
+
+    firewall = Device(
+        name="Firewall",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+
+    switch = Device(
+        name="Main Switch",
+        device_type=DeviceType.SWITCH,
+    )
+
+    window.add_device(firewall)
+    window.add_device(switch)
+
+    first_connection = Connection(
+        source_device_id=firewall.id,
+        destination_device_id=switch.id,
+        source_interface="igb2",
+        destination_interface="Gi1/0/24",
+        link_type=LinkType.TRUNK,
+    )
+
+    reversed_connection = Connection(
+        source_device_id=switch.id,
+        destination_device_id=firewall.id,
+        source_interface="Gi1/0/24",
+        destination_interface="igb2",
+        link_type=LinkType.TRUNK,
+    )
+
+    window.add_connection(first_connection)
+    window.add_connection(reversed_connection)
+
+    assert len(window.network_map.connections) == 1
+
+def test_add_connection_allows_different_interfaces(qapp):
+    window = MainWindow()
+
+    firewall = Device(
+        name="Firewall",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+
+    switch = Device(
+        name="Main Switch",
+        device_type=DeviceType.SWITCH,
+    )
+
+    window.add_device(firewall)
+    window.add_device(switch)
+
+    first_connection = Connection(
+        source_device_id=firewall.id,
+        destination_device_id=switch.id,
+        source_interface="igb1",
+        destination_interface="Gi1/0/1",
+        link_type=LinkType.STANDARD_ACCESS,
+    )
+
+    second_connection = Connection(
+        source_device_id=firewall.id,
+        destination_device_id=switch.id,
+        source_interface="igb2",
+        destination_interface="Gi1/0/24",
+        link_type=LinkType.TRUNK,
+    )
+
+    window.add_connection(first_connection)
+    window.add_connection(second_connection)
+
+    assert len(window.network_map.connections) == 2
+
+def test_connection_selection_enables_delete_action(qapp):
+    window = MainWindow()
+
+    firewall = Device(
+        name="Firewall",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+
+    switch = Device(
+        name="Main Switch",
+        device_type=DeviceType.SWITCH,
+    )
+
+    window.add_device(firewall)
+    window.add_device(switch)
+
+    connection = Connection(
+        source_device_id=firewall.id,
+        destination_device_id=switch.id,
+        link_type=LinkType.TRUNK,
+    )
+
+    window.add_connection(connection)
+
+    edge = window.topology_view.edge_for_connection(
+        connection.id
+    )
+
+    edge.setSelected(True)
+
+    assert window.delete_connection_action.isEnabled()
+
+def test_delete_connection_action_removes_selected_connection(qapp):
+    window = MainWindow()
+
+    firewall = Device(
+        name="Firewall",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+
+    switch = Device(
+        name="Main Switch",
+        device_type=DeviceType.SWITCH,
+    )
+
+    window.add_device(firewall)
+    window.add_device(switch)
+
+    connection = Connection(
+        source_device_id=firewall.id,
+        destination_device_id=switch.id,
+        link_type=LinkType.TRUNK,
+    )
+
+    window.add_connection(connection)
+
+    edge = window.topology_view.edge_for_connection(
+        connection.id
+    )
+
+    edge.setSelected(True)
+
+    window.delete_connection_action.trigger()
+
+    assert connection not in window.network_map.connections
+    assert (
+        window.topology_view.edge_for_connection(
+            connection.id
+        )
+        is None
+    )
+    assert not window.delete_connection_action.isEnabled()
+
+def test_selecting_device_disables_delete_connection(qapp):
+    window = MainWindow()
+
+    firewall = Device(
+        name="Firewall",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+
+    switch = Device(
+        name="Main Switch",
+        device_type=DeviceType.SWITCH,
+    )
+
+    window.add_device(firewall)
+    window.add_device(switch)
+
+    connection = Connection(
+        source_device_id=firewall.id,
+        destination_device_id=switch.id,
+        link_type=LinkType.TRUNK,
+    )
+
+    window.add_connection(connection)
+
+    edge = window.topology_view.edge_for_connection(
+        connection.id
+    )
+
+    firewall_node = window.topology_view.node_for_device(
+        firewall.id
+    )
+
+    edge.setSelected(True)
+
+    assert window.delete_connection_action.isEnabled()
+
+    edge.setSelected(False)
+    firewall_node.setSelected(True)
+
+    assert not window.delete_connection_action.isEnabled()
+
+def test_rebuild_clears_selected_connection(qapp):
+    window = MainWindow()
+
+    firewall = Device(
+        name="Firewall",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+
+    switch = Device(
+        name="Main Switch",
+        device_type=DeviceType.SWITCH,
+    )
+
+    window.add_device(firewall)
+    window.add_device(switch)
+
+    connection = Connection(
+        source_device_id=firewall.id,
+        destination_device_id=switch.id,
+        link_type=LinkType.TRUNK,
+    )
+
+    window.add_connection(connection)
+
+    edge = window.topology_view.edge_for_connection(
+        connection.id
+    )
+
+    edge.setSelected(True)
+
+    assert window.delete_connection_action.isEnabled()
+
+    window._rebuild_from_document()
+
+    assert not window.delete_connection_action.isEnabled()
+    assert window.selected_connection_id is None
+
+def test_deselecting_connection_disables_delete_action(qapp):
+    window = MainWindow()
+
+    firewall = Device(
+        name="Firewall",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+
+    switch = Device(
+        name="Main Switch",
+        device_type=DeviceType.SWITCH,
+    )
+
+    window.add_device(firewall)
+    window.add_device(switch)
+
+    connection = Connection(
+        source_device_id=firewall.id,
+        destination_device_id=switch.id,
+        link_type=LinkType.TRUNK,
+    )
+
+    window.add_connection(connection)
+
+    edge = window.topology_view.edge_for_connection(
+        connection.id
+    )
+
+    edge.setSelected(True)
+
+    assert window.delete_connection_action.isEnabled()
+
+    edge.setSelected(False)
+
+    assert not window.delete_connection_action.isEnabled()
+    assert window.selected_connection_id is None
