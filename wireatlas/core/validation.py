@@ -21,6 +21,18 @@ def is_valid_mac(value: str) -> bool:
     pattern = r"^(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$"
     return re.fullmatch(pattern, value) is not None
 
+def is_valid_subnet_mask(value: str) -> bool:
+    if value == "":
+        return True
+
+    try:
+        network = ipaddress.IPv4Network(
+            f"0.0.0.0/{value}"
+        )
+        return str(network.netmask) == value
+    except ValueError:
+        return False
+
 def validate_network_map_data(network_map: NetworkMap) -> list[str]:
     warnings: list[str] = []
 
@@ -28,6 +40,11 @@ def validate_network_map_data(network_map: NetworkMap) -> list[str]:
         if not is_valid_ip(device.ip_address):
             warnings.append(
                 f"{device.name}: invalid IP address: {device.ip_address}"
+            )
+
+        if not is_valid_subnet_mask(device.subnet_mask):
+            warnings.append(
+                f"{device.name}: invalid subnet mask: {device.subnet_mask}"
             )
 
         if not is_valid_mac(device.mac_address):

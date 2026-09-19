@@ -15,10 +15,13 @@ def test_save_and_load_network_map_round_trip(tmp_path):
     router = Device(
         name="Main Router",
         device_type=DeviceType.FIREWALL_ROUTER,
+        hostname="MAIN-ROUTER",
         ip_address="192.168.1.1",
+        subnet_mask="255.255.255.0",
         mac_address="AA:BB:CC:DD:EE:FF",
         vlan_id="10",
         subnet="192.168.1.0/24",
+        vendor="Netgate",
         notes="Primary gateway",
         x=100.0,
         y=200.0,
@@ -201,3 +204,32 @@ def test_load_rejects_unknown_link_type(tmp_path):
 
     with pytest.raises(WireAtlasFileError, match="Unknown link type"):
         load_network_map(path)
+
+def test_load_old_file_without_new_device_metadata(tmp_path):
+    path = tmp_path / "old-map.wireatlas"
+    path.write_text(
+        json.dumps(
+            {
+                "site_name": "Legacy Site",
+                "root_device_id": "device-1",
+                "format_version": "0.1",
+                "devices": [
+                    {
+                        "id": "device-1",
+                        "name": "Old Router",
+                        "device_type": "Firewall / Router",
+                        "ip_address": "192.168.1.1",
+                    }
+                ],
+                "connections": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_network_map(path)
+    device = loaded.devices[0]
+
+    assert device.hostname == ""
+    assert device.subnet_mask == ""
+    assert device.vendor == ""

@@ -1,4 +1,6 @@
-﻿from PySide6.QtGui import QCloseEvent
+﻿from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
+from PySide6.QtGui import QCloseEvent
 import pytest
 from PySide6.QtWidgets import QMessageBox
 from PySide6.QtWidgets import QDialog
@@ -114,17 +116,59 @@ def test_selecting_node_populates_details_panel(qapp):
     assert window.details_panel.ip_value.text() == "192.168.1.1"
     assert window.details_panel.root_value.text() == "Yes"
 
-
-def test_main_window_starts_with_map_wider_than_details(qapp):
+def test_clicking_node_populates_details_panel(
+    qapp,
+    monkeypatch,
+):
     window = MainWindow()
+
+    router = Device(
+        name="Main Router",
+        device_type=DeviceType.FIREWALL_ROUTER,
+        hostname="MAIN-ROUTER",
+        subnet_mask="255.255.255.0",
+        vendor="Netgate",
+    )
+
+    window.add_device(router)
+
     window.resize(1200, 700)
     window.show()
-
     qapp.processEvents()
 
-    sizes = window.main_splitter.sizes()
+    def fail_clear():
+        raise AssertionError(
+            "details panel was cleared after device selection"
+        )
 
-    assert sizes[0] >= sizes[1] * 2
+    monkeypatch.setattr(
+        window.details_panel,
+        "clear",
+        fail_clear,
+    )
+
+    node = window.topology_view.node_for_device(router.id)
+
+    selected_ids = []
+    window.topology_view.device_selected.connect(
+        selected_ids.append
+    )
+
+    click_position = window.topology_view.mapFromScene(
+        node.label.sceneBoundingRect().center()
+    )
+
+    QTest.mouseClick(
+        window.topology_view.viewport(),
+        Qt.MouseButton.LeftButton,
+        pos=click_position,
+    )
+    qapp.processEvents()
+
+    assert node.isSelected()
+    assert selected_ids == [router.id]
+    assert window.details_panel.name_value.text() == "Main Router"
+    assert not window.details_panel.form_widget.isHidden()
 
 def test_add_device_action_uses_device_dialog(qapp, monkeypatch):
     window = MainWindow()

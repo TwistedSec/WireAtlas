@@ -25,9 +25,8 @@ class Device:
     notes: str = ""
     x: float = 0.0
     y: float = 0.0
-    notes: str = ""
-    x: float = 0.0
-    y: float = 0.0
     field_sources: dict[str, str] = field(default_factory=dict)
     id: str = field(default_factory=lambda: str(uuid4()))
-    id: str = field(default_factory=lambda: str(uuid4()))
+    hostname: str = ""
+    subnet_mask: str = ""
+    vendor: str = ""

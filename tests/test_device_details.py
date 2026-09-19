@@ -14,10 +14,13 @@ def test_details_panel_shows_device_values(qapp):
     device = Device(
         name="Main Router",
         device_type=DeviceType.FIREWALL_ROUTER,
+        hostname="MAIN-ROUTER",
         ip_address="192.168.1.1",
+        subnet_mask="255.255.255.0",
         mac_address="AA:BB:CC:DD:EE:FF",
         vlan_id="10",
         subnet="192.168.1.0/24",
+        vendor="Netgate",
         notes="Primary gateway",
     )
 
@@ -34,6 +37,9 @@ def test_details_panel_shows_device_values(qapp):
     assert panel.notes_value.toPlainText() == "Primary gateway"
     assert panel.root_value.text() == "Yes"
     assert panel.notes_value.isReadOnly()
+    assert panel.hostname_value.text() == "MAIN-ROUTER"
+    assert panel.subnet_mask_value.text() == "255.255.255.0"
+    assert panel.vendor_value.text() == "Netgate"
 
 
 def test_details_panel_uses_placeholder_for_blank_values(qapp):
@@ -51,4 +57,7 @@ def test_details_panel_uses_placeholder_for_blank_values(qapp):
     assert panel.vlan_value.text() == "—"
     assert panel.subnet_value.text() == "—"
     assert panel.notes_value.toPlainText() == "—"
+    assert panel.hostname_value.text() == "—"
+    assert panel.subnet_mask_value.text() == "—"
+    assert panel.vendor_value.text() == "—"
     assert panel.root_value.text() == "No"

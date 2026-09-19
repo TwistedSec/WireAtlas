@@ -1,3 +1,5 @@
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from wireatlas.models.device import Device, DeviceType
 from wireatlas.ui.topology_view import TopologyView
 from wireatlas.models.connection import Connection, LinkType
@@ -54,6 +56,35 @@ def test_topology_view_emits_selected_device_id(qapp):
     view.device_selected.connect(selected_ids.append)
 
     node.setSelected(True)
+    qapp.processEvents()
+
+    assert selected_ids == [device.id]
+
+def test_clicking_device_label_selects_device(qapp):
+    view = TopologyView()
+
+    device = Device(
+        name="Main Router",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+
+    node = view.add_device(device)
+
+    selected_ids = []
+    view.device_selected.connect(selected_ids.append)
+
+    view.show()
+    qapp.processEvents()
+
+    click_position = view.mapFromScene(
+        node.label.sceneBoundingRect().center()
+    )
+
+    QTest.mouseClick(
+        view.viewport(),
+        Qt.MouseButton.LeftButton,
+        pos=click_position,
+    )
     qapp.processEvents()
 
     assert selected_ids == [device.id]

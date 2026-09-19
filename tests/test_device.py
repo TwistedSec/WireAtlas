@@ -57,3 +57,20 @@ def test_devices_receive_unique_ids():
     assert first.id
     assert second.id
     assert first.id != second.id
+
+def test_device_supports_discovery_ready_metadata():
+    device = Device(
+        name="Front Desk PC",
+        device_type=DeviceType.WORKSTATION,
+        hostname="DESKTOP-7F3K2Q",
+        ip_address="192.168.1.25",
+        subnet_mask="255.255.255.0",
+        subnet="192.168.1.0/24",
+        vlan_id="10",
+        mac_address="AA:BB:CC:DD:EE:FF",
+        vendor="Dell",
+    )
+
+    assert device.hostname == "DESKTOP-7F3K2Q"
+    assert device.subnet_mask == "255.255.255.0"
+    assert device.vendor == "Dell"

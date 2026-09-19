@@ -66,3 +66,40 @@ def test_device_dialog_builds_device_with_manual_provenance(qapp):
         "ip_address": "manual",
         "notes": "manual",
     }
+
+def test_device_dialog_builds_discovery_ready_metadata(qapp):
+    dialog = DeviceDialog()
+
+    dialog.name_input.setText("Front Desk PC")
+    dialog.type_combo.setCurrentIndex(
+        dialog.type_combo.findData(DeviceType.WORKSTATION)
+    )
+
+    dialog.hostname_input.setText("DESKTOP-7F3K2Q")
+    dialog.subnet_mask_input.setText("255.255.255.0")
+    dialog.vendor_input.setText("Dell")
+
+    device = dialog.build_device()
+
+    assert device.hostname == "DESKTOP-7F3K2Q"
+    assert device.subnet_mask == "255.255.255.0"
+    assert device.vendor == "Dell"
+
+    assert device.field_sources["hostname"] == "manual"
+    assert device.field_sources["subnet_mask"] == "manual"
+    assert device.field_sources["vendor"] == "manual"
+
+def test_device_dialog_rejects_invalid_nonblank_subnet_mask(qapp):
+    dialog = DeviceDialog()
+
+    dialog.name_input.setText("Main Router")
+    dialog.type_combo.setCurrentIndex(
+        dialog.type_combo.findData(DeviceType.FIREWALL_ROUTER)
+    )
+    dialog.subnet_mask_input.setText("255.0.255.0")
+
+    assert not dialog.add_button.isEnabled()
+    assert (
+        dialog.subnet_mask_error.text()
+        == "Enter a valid subnet mask."
+    )
