@@ -1,4 +1,5 @@
-﻿from PySide6.QtCore import Qt
+﻿from PySide6.QtPdf import QPdfDocument
+from PySide6.QtCore import Qt, QRectF
 from PySide6.QtTest import QTest
 from PySide6.QtGui import QCloseEvent
 import pytest
@@ -58,6 +59,35 @@ def test_suggested_filename_uses_site_name(qapp):
     assert (
         window._suggested_filename()
         == "Main Office.wireatlas"
+    )
+
+def test_ensure_pdf_extension_appends_when_missing(qapp):
+    window = MainWindow()
+
+    result = window._ensure_pdf_extension(
+        Path("Main Office Network Map")
+    )
+
+    assert result == Path("Main Office Network Map.pdf")
+
+
+def test_ensure_pdf_extension_keeps_existing_extension(qapp):
+    window = MainWindow()
+
+    result = window._ensure_pdf_extension(
+        Path("Main Office Network Map.pdf")
+    )
+
+    assert result == Path("Main Office Network Map.pdf")
+
+
+def test_suggested_pdf_filename_uses_site_name(qapp):
+    window = MainWindow()
+    window.site_name_input.setText("Main Office")
+
+    assert (
+        window._suggested_pdf_filename()
+        == "Main Office Network Map.pdf"
     )
 
 def test_site_name_edit_updates_network_map(qapp):
@@ -869,6 +899,37 @@ def test_dirty_open_cancel_does_not_open_dialog(
 
     assert window._request_open_document() is False
 
+def test_export_pdf_cancel_leaves_document_unchanged(
+    qapp,
+    monkeypatch,
+):
+    window = MainWindow()
+    window.site_name_input.setText("Main Office")
+
+    dirty_before = window.document.dirty
+    path_before = window.document.current_path
+    dialog_args = []
+
+    def fake_get_save_file_name(*args, **kwargs):
+        dialog_args.append(args)
+        return "", "PDF Files (*.pdf)"
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        fake_get_save_file_name,
+    )
+
+    result = window._export_pdf()
+
+    assert result is False
+    assert window.document.dirty is dirty_before
+    assert window.document.current_path == path_before
+
+    assert dialog_args[0][1] == "Export Network Map as PDF"
+    assert dialog_args[0][2] == "Main Office Network Map.pdf"
+    assert dialog_args[0][3] == "PDF Files (*.pdf)"
+
 def test_open_action_uses_guarded_open_workflow(
     qapp,
     monkeypatch,
@@ -1527,3 +1588,954 @@ def test_deselecting_connection_disables_delete_action(qapp):
 
     assert not window.delete_connection_action.isEnabled()
     assert window.selected_connection_id is None
+
+def test_export_pdf_appends_extension_and_preserves_document_state(
+    qapp,
+    monkeypatch,
+    tmp_path,
+):
+    window = MainWindow()
+    window.site_name_input.setText("Main Office")
+
+    dirty_before = window.document.dirty
+    path_before = window.document.current_path
+
+    selected = tmp_path / "main-office-map"
+    exported_paths = []
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (
+            str(selected),
+            "PDF Files (*.pdf)",
+        ),
+    )
+
+    monkeypatch.setattr(
+        window,
+        "_write_pdf",
+        lambda path: exported_paths.append(path),
+        raising=False,
+    )
+
+    result = window._export_pdf()
+
+    assert result is True
+    assert exported_paths == [
+        tmp_path / "main-office-map.pdf"
+    ]
+    assert window.document.dirty is dirty_before
+    assert window.document.current_path == path_before
+
+def test_write_pdf_creates_valid_pdf_file(
+    qapp,
+    tmp_path,
+):
+    window = MainWindow()
+
+    path = tmp_path / "test-map.pdf"
+
+    window._write_pdf(path)
+
+    assert path.exists()
+    assert path.stat().st_size > 0
+    assert path.read_bytes().startswith(b"%PDF")
+
+def test_write_pdf_uses_letter_landscape(
+    qapp,
+    tmp_path,
+):
+    window = MainWindow()
+
+    path = tmp_path / "letter-landscape.pdf"
+    window._write_pdf(path)
+
+    document = QPdfDocument()
+    document.load(str(path))
+
+    page_size = document.pagePointSize(0)
+
+    assert round(page_size.width()) == 792
+    assert round(page_size.height()) == 612
+
+def test_add_device_enables_export_pdf(qapp):
+    window = MainWindow()
+
+    device = Device(
+        name="Main Router",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+
+    window.add_device(device)
+
+    assert window.export_pdf_action.isEnabled()
+
+def test_rebuild_enables_export_pdf_for_existing_map(qapp):
+    window = MainWindow()
+
+    network_map = NetworkMap(
+        site_name="Office",
+        devices=[
+            Device(
+                name="Firewall",
+                device_type=DeviceType.FIREWALL_ROUTER,
+            ),
+        ],
+    )
+
+    window.document.replace_map(network_map)
+
+    window._rebuild_from_document()
+
+    assert window.export_pdf_action.isEnabled() is True
+
+def test_export_pdf_action_uses_export_workflow(
+    qapp,
+    monkeypatch,
+):
+    window = MainWindow()
+
+    calls = []
+
+    monkeypatch.setattr(
+        window,
+        "_export_pdf",
+        lambda: calls.append("pdf"),
+        raising=False,
+    )
+
+    window.export_pdf_action.setEnabled(True)
+    window.export_pdf_action.trigger()
+
+    assert calls == ["pdf"]
+
+def test_write_pdf_includes_site_name_header(
+    qapp,
+    tmp_path,
+):
+    window = MainWindow()
+    window.site_name_input.setText("Main Office")
+
+    path = tmp_path / "site-header.pdf"
+    window._write_pdf(path)
+
+    document = QPdfDocument()
+    document.load(str(path))
+
+    page_text = document.getAllText(0).text()
+
+    assert "Main Office" in page_text
+
+def test_write_pdf_includes_topology_device(
+    qapp,
+    tmp_path,
+):
+    window = MainWindow()
+
+    device = Device(
+        name="Main Router",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+
+    window.add_device(device)
+
+    path = tmp_path / "topology-device.pdf"
+    window._write_pdf(path)
+
+    document = QPdfDocument()
+    document.load(str(path))
+
+    page_text = document.getAllText(0).text()
+
+    assert "Main Router" in page_text
+    assert "Firewall / Router" in page_text
+
+def test_write_pdf_includes_topology_connection(
+    qapp,
+    tmp_path,
+):
+    window = MainWindow()
+
+    firewall = Device(
+        name="Firewall",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+
+    switch = Device(
+        name="Main Switch",
+        device_type=DeviceType.SWITCH,
+    )
+
+    window.add_device(firewall)
+    window.add_device(switch)
+
+    connection = Connection(
+        source_device_id=firewall.id,
+        destination_device_id=switch.id,
+        source_interface="LAN1",
+        destination_interface="Gi0/1",
+        link_type=LinkType.TRUNK,
+    )
+
+    window.add_connection(connection)
+
+    path = tmp_path / "topology-connection.pdf"
+    window._write_pdf(path)
+
+    document = QPdfDocument()
+    document.load(str(path))
+
+    page_text = document.getAllText(0).text()
+
+    assert "Firewall" in page_text
+    assert "Main Switch" in page_text
+    assert "Trunk" in page_text
+    assert "LAN1" in page_text
+    assert "Gi0/1" in page_text
+
+def test_topology_fit_scale_uses_smaller_dimension(qapp):
+    window = MainWindow()
+
+    scale = window._topology_fit_scale(
+        source_width=1000.0,
+        source_height=400.0,
+        target_width=720.0,
+        target_height=504.0,
+    )
+
+    assert scale == pytest.approx(0.72)
+
+
+def test_topology_requires_pagination_below_readable_scale(qapp):
+    window = MainWindow()
+
+    assert (
+        window._topology_fits_single_page(
+            source_width=1000.0,
+            source_height=400.0,
+            target_width=720.0,
+            target_height=504.0,
+        )
+        is False
+    )
+
+
+def test_topology_fits_single_page_at_readable_scale(qapp):
+    window = MainWindow()
+
+    assert (
+        window._topology_fits_single_page(
+            source_width=800.0,
+            source_height=400.0,
+            target_width=720.0,
+            target_height=504.0,
+        )
+        is True
+    )
+
+def test_plan_topology_pages_keeps_readable_map_on_one_page(qapp):
+    window = MainWindow()
+
+    firewall = Device(
+        name="Firewall",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+    switch = Device(
+        name="Main Switch",
+        device_type=DeviceType.SWITCH,
+    )
+
+    window.add_device(firewall)
+    window.add_device(switch)
+
+    pages = window._plan_topology_pages(
+        target_width=720.0,
+        target_height=504.0,
+    )
+
+    assert pages == [
+        [firewall.id, switch.id]
+    ]
+
+def test_plan_topology_pages_repeats_common_ancestor(qapp):
+    window = MainWindow()
+
+    firewall = Device(
+        name="Firewall",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+    switch = Device(
+        name="Main Switch",
+        device_type=DeviceType.SWITCH,
+    )
+    printer = Device(
+        name="Printer",
+        device_type=DeviceType.PRINTER,
+    )
+
+    window.add_device(firewall)
+    window.add_device(switch)
+    window.add_device(printer)
+
+    window.add_connection(
+        Connection(
+            source_device_id=firewall.id,
+            destination_device_id=switch.id,
+        )
+    )
+    window.add_connection(
+        Connection(
+            source_device_id=switch.id,
+            destination_device_id=printer.id,
+        )
+    )
+
+    window.topology_view.node_for_device(
+        firewall.id
+    ).setPos(0.0, 40.0)
+
+    window.topology_view.node_for_device(
+        switch.id
+    ).setPos(500.0, 40.0)
+
+    window.topology_view.node_for_device(
+        printer.id
+    ).setPos(900.0, 40.0)
+
+    pages = window._plan_topology_pages(
+        target_width=720.0,
+        target_height=504.0,
+    )
+
+    assert pages == [
+        [firewall.id, switch.id],
+        [switch.id, printer.id],
+    ]
+
+def test_write_pdf_uses_multiple_topology_pages_when_needed(
+    qapp,
+    tmp_path,
+):
+    window = MainWindow()
+
+    firewall = Device(
+        name="Firewall",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+    switch = Device(
+        name="Main Switch",
+        device_type=DeviceType.SWITCH,
+    )
+    printer = Device(
+        name="Printer",
+        device_type=DeviceType.PRINTER,
+    )
+
+    window.add_device(firewall)
+    window.add_device(switch)
+    window.add_device(printer)
+
+    window.add_connection(
+        Connection(
+            source_device_id=firewall.id,
+            destination_device_id=switch.id,
+        )
+    )
+    window.add_connection(
+        Connection(
+            source_device_id=switch.id,
+            destination_device_id=printer.id,
+        )
+    )
+
+    window.topology_view.node_for_device(
+        firewall.id
+    ).setPos(0.0, 40.0)
+
+    window.topology_view.node_for_device(
+        switch.id
+    ).setPos(500.0, 40.0)
+
+    window.topology_view.node_for_device(
+        printer.id
+    ).setPos(900.0, 40.0)
+
+    path = tmp_path / "multi-page-topology.pdf"
+    window._write_pdf(path)
+
+    document = QPdfDocument()
+    document.load(str(path))
+
+    assert document.pageCount() == 3
+
+    reference_text = "".join(
+        document.getAllText(2).text().split()
+    )
+    assert "DeviceReference" in reference_text
+
+def test_write_pdf_repeats_common_ancestor_on_continuation_page(
+    qapp,
+    tmp_path,
+):
+    window = MainWindow()
+
+    firewall = Device(
+        name="Firewall",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+    switch = Device(
+        name="Main Switch",
+        device_type=DeviceType.SWITCH,
+    )
+    printer = Device(
+        name="Printer",
+        device_type=DeviceType.PRINTER,
+    )
+
+    window.add_device(firewall)
+    window.add_device(switch)
+    window.add_device(printer)
+
+    window.add_connection(
+        Connection(
+            source_device_id=firewall.id,
+            destination_device_id=switch.id,
+        )
+    )
+    window.add_connection(
+        Connection(
+            source_device_id=switch.id,
+            destination_device_id=printer.id,
+        )
+    )
+
+    window.topology_view.node_for_device(
+        firewall.id
+    ).setPos(0.0, 40.0)
+
+    window.topology_view.node_for_device(
+        switch.id
+    ).setPos(500.0, 40.0)
+
+    window.topology_view.node_for_device(
+        printer.id
+    ).setPos(900.0, 40.0)
+
+    path = tmp_path / "continuation.pdf"
+    window._write_pdf(path)
+
+    document = QPdfDocument()
+    document.load(str(path))
+
+    page_one = "".join(
+        document.getAllText(0).text().split()
+    )
+    page_two = "".join(
+        document.getAllText(1).text().split()
+    )
+
+    assert "Firewall" in page_one
+    assert "MainSwitch" in page_one
+    assert "Printer" not in page_one
+
+    assert "MainSwitch" in page_two
+    assert "Printer" in page_two
+    assert "Firewall" not in page_two
+
+def test_write_pdf_adds_device_reference_after_topology(
+    qapp,
+    tmp_path,
+):
+    window = MainWindow()
+
+    device = Device(
+        name="Front Desk PC",
+        device_type=DeviceType.WORKSTATION,
+        hostname="DESKTOP-7F3K2Q",
+        ip_address="192.168.1.25",
+        subnet_mask="255.255.255.0",
+        subnet="192.168.1.0/24",
+        vlan_id="10",
+        mac_address="AA:BB:CC:DD:EE:FF",
+        vendor="Dell",
+    )
+
+    window.add_device(device)
+
+    path = tmp_path / "device-reference.pdf"
+    window._write_pdf(path)
+
+    document = QPdfDocument()
+    document.load(str(path))
+
+    assert document.pageCount() == 2
+
+    reference_text = "".join(
+        document.getAllText(1).text().split()
+    )
+
+    assert "DeviceReference" in reference_text
+    assert "FrontDeskPC" in reference_text
+    assert "DESKTOP-7F3K2Q" in reference_text
+    assert "192.168.1.25" in reference_text
+    assert "255.255.255.0" in reference_text
+    assert "192.168.1.0/24" in reference_text
+    assert "AA:BB:CC:DD:EE:FF" in reference_text
+    assert "Dell" in reference_text
+
+def test_device_reference_paginates_when_rows_do_not_fit(
+    qapp,
+    tmp_path,
+):
+    window = MainWindow()
+
+    first_device = Device(
+        name="Device 1",
+        device_type=DeviceType.WORKSTATION,
+    )
+    window.add_device(first_device)
+
+    for index in range(2, 26):
+        window.network_map.devices.append(
+            Device(
+                name=f"Device {index}",
+                device_type=DeviceType.WORKSTATION,
+            )
+        )
+
+    path = tmp_path / "reference-pagination.pdf"
+    window._write_pdf(path)
+
+    document = QPdfDocument()
+    document.load(str(path))
+
+    assert document.pageCount() == 3
+
+    page_two = "".join(
+        document.getAllText(1).text().split()
+    )
+    page_three = "".join(
+        document.getAllText(2).text().split()
+    )
+
+    assert "DeviceReference" in page_two
+    assert "DeviceReference" in page_three
+    assert "Device1" in page_two
+    assert "Device25" in page_three
+
+def test_topology_render_rect_does_not_upscale_small_map(qapp):
+    window = MainWindow()
+
+    source_rect = QRectF(
+        0.0,
+        0.0,
+        300.0,
+        150.0,
+    )
+
+    target_rect = QRectF(
+        36.0,
+        72.0,
+        720.0,
+        504.0,
+    )
+
+    render_rect = window._topology_render_rect(
+        source_rect,
+        target_rect,
+    )
+
+    assert render_rect.width() == pytest.approx(300.0)
+    assert render_rect.height() == pytest.approx(150.0)
+    assert render_rect.center() == target_rect.center()
+
+def test_write_pdf_uses_topology_render_rect(
+    qapp,
+    tmp_path,
+    monkeypatch,
+):
+    window = MainWindow()
+
+    device = Device(
+        name="Main Router",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+    window.add_device(device)
+
+    calls = []
+
+    def fake_render_rect(source_rect, target_rect):
+        calls.append((source_rect, target_rect))
+        return target_rect
+
+    monkeypatch.setattr(
+        window,
+        "_topology_render_rect",
+        fake_render_rect,
+    )
+
+    path = tmp_path / "render-scale.pdf"
+    window._write_pdf(path)
+
+    assert len(calls) == 1
+
+def test_write_pdf_hides_selection_during_topology_render(
+    qapp,
+    tmp_path,
+    monkeypatch,
+):
+    window = MainWindow()
+
+    device = Device(
+        name="Main Router",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+    window.add_device(device)
+
+    node = window.topology_view.node_for_device(
+        device.id
+    )
+    node.setSelected(True)
+
+    scene = window.topology_view.graphics_scene
+    selections_during_render = []
+
+    original_render = type(scene).render
+
+    def tracking_render(self, *args, **kwargs):
+        if self is scene:
+            selections_during_render.append(
+                len(self.selectedItems())
+            )
+
+        return original_render(
+            self,
+            *args,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        type(scene),
+        "render",
+        tracking_render,
+    )
+
+    path = tmp_path / "selection-test.pdf"
+    window._write_pdf(path)
+
+    assert selections_during_render == [0]
+    assert node.isSelected() is True
+
+def test_connection_labels_use_compact_display_names(
+    qapp,
+):
+    window = MainWindow()
+
+    firewall = Device(
+        name="Firewall",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+    workstation = Device(
+        name="Workstation",
+        device_type=DeviceType.WORKSTATION,
+    )
+
+    window.add_device(firewall)
+    window.add_device(workstation)
+
+    cases = [
+        (
+            LinkType.STANDARD_ACCESS,
+            "Wired • Gi0 ↔ lan0",
+        ),
+        (
+            LinkType.WIRELESS,
+            "WiFi • wlan0 ↔ WiFi",
+        ),
+        (
+            LinkType.TRUNK,
+            "Trunk • Gi1 ↔ Gi24",
+        ),
+    ]
+
+    for link_type, expected_text in cases:
+        connection = Connection(
+            source_device_id=firewall.id,
+            destination_device_id=workstation.id,
+            source_interface=(
+                "wlan0"
+                if link_type == LinkType.WIRELESS
+                else "Gi1"
+                if link_type == LinkType.TRUNK
+                else "Gi0"
+            ),
+            destination_interface=(
+                "WiFi"
+                if link_type == LinkType.WIRELESS
+                else "Gi24"
+                if link_type == LinkType.TRUNK
+                else "lan0"
+            ),
+            link_type=link_type,
+        )
+
+        window.add_connection(connection)
+
+        edge = window.topology_view._edges[
+            connection.id
+        ]
+
+        assert edge.display_text() == expected_text
+
+def test_connection_belongs_on_topology_page(qapp):
+    window = MainWindow()
+
+    assert window._connection_belongs_on_topology_page(
+        "firewall",
+        "switch",
+        {"firewall", "switch"},
+    )
+
+    assert not window._connection_belongs_on_topology_page(
+        "switch",
+        "nas",
+        {"firewall", "switch"},
+    )
+
+def test_write_pdf_hides_connections_not_on_current_topology_page(
+    qapp,
+    tmp_path,
+    monkeypatch,
+):
+    window = MainWindow()
+
+    firewall = Device(
+        name="Firewall",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+    switch = Device(
+        name="Main Switch",
+        device_type=DeviceType.SWITCH,
+    )
+    nas = Device(
+        name="NAS",
+        device_type=DeviceType.SERVER_NAS,
+    )
+
+    window.add_device(firewall)
+    window.add_device(switch)
+    window.add_device(nas)
+
+    first_connection = Connection(
+        source_device_id=firewall.id,
+        destination_device_id=switch.id,
+    )
+
+    second_connection = Connection(
+        source_device_id=switch.id,
+        destination_device_id=nas.id,
+    )
+
+    window.add_connection(first_connection)
+    window.add_connection(second_connection)
+
+    window.topology_view.node_for_device(
+        firewall.id
+    ).setPos(0.0, 40.0)
+
+    window.topology_view.node_for_device(
+        switch.id
+    ).setPos(500.0, 40.0)
+
+    window.topology_view.node_for_device(
+        nas.id
+    ).setPos(900.0, 40.0)
+
+    scene = window.topology_view.graphics_scene
+    visible_connections = []
+
+    original_render = type(scene).render
+
+    def tracking_render(self, *args, **kwargs):
+        if self is scene:
+            visible_connections.append(
+                {
+                    connection_id
+                    for connection_id, edge
+                    in window.topology_view._edges.items()
+                    if (
+                        edge.isVisible()
+                        and edge.label.isVisible()
+                    )
+                }
+            )
+
+        return original_render(
+            self,
+            *args,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        type(scene),
+        "render",
+        tracking_render,
+    )
+
+    path = tmp_path / "page-connections.pdf"
+    window._write_pdf(path)
+
+    assert visible_connections == [
+        {first_connection.id},
+        {second_connection.id},
+    ]
+
+    assert window.topology_view._edges[
+        first_connection.id
+    ].isVisible()
+
+    assert window.topology_view._edges[
+        first_connection.id
+    ].label.isVisible()
+
+    assert window.topology_view._edges[
+        second_connection.id
+    ].isVisible()
+
+    assert window.topology_view._edges[
+        second_connection.id
+    ].label.isVisible()
+
+def test_topology_page_plan_does_not_drop_last_device(
+    qapp,
+):
+    window = MainWindow()
+
+    firewall = Device(
+        name="Main Firewall",
+        device_type=DeviceType.FIREWALL_ROUTER,
+    )
+    comp1 = Device(
+        name="Comp1",
+        device_type=DeviceType.WORKSTATION,
+    )
+    comp2 = Device(
+        name="Comp2",
+        device_type=DeviceType.WORKSTATION,
+    )
+    switch = Device(
+        name="Main Switch",
+        device_type=DeviceType.SWITCH,
+    )
+    printer = Device(
+        name="Printer",
+        device_type=DeviceType.PRINTER,
+    )
+    nas = Device(
+        name="NAS",
+        device_type=DeviceType.SERVER_NAS,
+    )
+
+    for device in [
+        firewall,
+        comp1,
+        comp2,
+        switch,
+        printer,
+        nas,
+    ]:
+        window.add_device(device)
+
+    for source, destination in [
+        (firewall, comp1),
+        (firewall, comp2),
+        (firewall, switch),
+        (switch, printer),
+        (switch, nas),
+    ]:
+        window.add_connection(
+            Connection(
+                source_device_id=source.id,
+                destination_device_id=destination.id,
+            )
+        )
+
+    positions = {
+        firewall.id: (40.0, 120.0),
+        comp1.id: (260.0, 20.0),
+        comp2.id: (260.0, 220.0),
+        switch.id: (620.0, 120.0),
+        printer.id: (850.0, 20.0),
+        nas.id: (1120.0, 220.0),
+    }
+
+    for device_id, position in positions.items():
+        window.topology_view.node_for_device(
+            device_id
+        ).setPos(*position)
+
+    pages = window._plan_topology_pages(
+        target_width=720.0,
+        target_height=504.0,
+    )
+
+    all_planned_devices = {
+        device_id
+        for page in pages
+        for device_id in page
+    }
+
+    assert nas.id in all_planned_devices
+    assert all_planned_devices == {
+        firewall.id,
+        comp1.id,
+        comp2.id,
+        switch.id,
+        printer.id,
+        nas.id,
+    }
+
+def test_export_pdf_failure_preserves_document_state(
+    qapp,
+    tmp_path,
+    monkeypatch,
+):
+    window = MainWindow()
+
+    window.document.dirty = True
+    original_path = window.document.current_path
+
+    export_path = tmp_path / "failed-export.pdf"
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (
+            str(export_path),
+            "PDF Files (*.pdf)",
+        ),
+    )
+
+    def fail_export(path):
+        raise OSError("Test export failure")
+
+    monkeypatch.setattr(
+        window,
+        "_write_pdf",
+        fail_export,
+    )
+
+    errors = []
+
+    monkeypatch.setattr(
+        window,
+        "_show_export_error",
+        lambda error: errors.append(error),
+    )
+
+    assert window._export_pdf() is False
+    assert window.document.current_path == original_path
+    assert window.document.dirty is True
+    assert len(errors) == 1
+    assert str(errors[0]) == "Test export failure"

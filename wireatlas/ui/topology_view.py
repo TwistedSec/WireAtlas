@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 from wireatlas.models.device import Device
-from wireatlas.models.connection import Connection
+from wireatlas.models.connection import Connection, LinkType
 
 NODE_WIDTH = 160.0
 NODE_HEIGHT = 70.0
@@ -127,25 +127,34 @@ class ConnectionEdge(QGraphicsLineItem):
         source_node.add_edge(self)
         destination_node.add_edge(self)
 
-        label_text = connection.link_type.value
+        display_names = {
+            LinkType.STANDARD_ACCESS: "Wired",
+            LinkType.WIRELESS: "WiFi",
+            LinkType.TRUNK: "Trunk",
+            LinkType.OTHER: "Other",
+        }
+
+        label_text = display_names[
+            connection.link_type
+        ]
 
         if (
             connection.source_interface
             and connection.destination_interface
         ):
             label_text = (
-                f"{connection.link_type.value} • "
+                f"{label_text} • "
                 f"{connection.source_interface} ↔ "
                 f"{connection.destination_interface}"
             )
         elif connection.source_interface:
             label_text = (
-                f"{connection.link_type.value} • "
+                f"{label_text} • "
                 f"{connection.source_interface}"
             )
         elif connection.destination_interface:
             label_text = (
-                f"{connection.link_type.value} • "
+                f"{label_text} • "
                 f"{connection.destination_interface}"
             )
 
