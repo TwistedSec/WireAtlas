@@ -113,3 +113,13 @@ Run the full test suite from the project directory with:
 ```powershell
 pytest
 ```
+
+## License
+
+Copyright (C) 2026 Paul Planchon
+
+WireAtlas is open source software licensed under the GNU General Public License v3.0 only (`GPL-3.0-only`).
+
+You are free to use, study, modify, and redistribute WireAtlas under the terms of the GPLv3. Distributed modified versions must remain available under the same open source license terms.
+
+See [LICENSE](LICENSE) for the complete license terms.
