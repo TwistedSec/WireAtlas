@@ -89,7 +89,15 @@ pip install -r requirements.txt
 
 ## Running from Source
 
-From the WireAtlas project directory, activate the virtual environment and start the application:
+After creating the virtual environment and installing the required packages, Windows users can launch WireAtlas with:
+
+```powershell
+.\WireAtlas.bat
+```
+
+The launcher uses the Python interpreter inside the project's `.venv` directory and does not require the virtual environment to be activated first.
+
+WireAtlas can also be started manually with:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
